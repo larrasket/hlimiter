@@ -1,0 +1,36 @@
+services:
+  - name: api-gateway
+    apis:
+      - path: /api/login
+        algorithm: sliding_window
+        key_strategy: ip
+        limit: 5
+        window_seconds: 60
+      - path: /api/data
+        algorithm: token_bucket
+        key_strategy: header:X-User-ID
+        limit: 100
+        window_seconds: 60
+        burst: 20
+  
+  - name: payment-service
+    apis:
+      - path: /payment/process
+        algorithm: sliding_window
+        key_strategy: header:X-Session-ID
+        limit: 10
+        window_seconds: 300
+      - path: /payment/validate
+        algorithm: token_bucket
+        key_strategy: ip
+        limit: 50
+        window_seconds: 60
+        burst: 10
+
+  - name: user-service
+    apis:
+      - path: /user/profile
+        algorithm: sliding_window
+        key_strategy: header:Authorization
+        limit: 200
+        window_seconds: 60
