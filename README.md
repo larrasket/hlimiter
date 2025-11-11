@@ -14,7 +14,7 @@ Overview:
                                                         │  State   │
                                                         └──────────┘
 ```
-The limiter supports to operations,
+The limiter supports two operations,
 
 - `Register`: Services register their rate limit configs
 - `Check`: Validate if request is allowed
