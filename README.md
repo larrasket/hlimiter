@@ -13,11 +13,6 @@ Overview:
                                                         │  Redis   │
                                                         │  State   │
                                                         └──────────┘
-
-
-
-
-
 ```
 The limiter supports to operations,
 
