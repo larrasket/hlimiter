@@ -1,45 +1,79 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-
-	"github.com/larrasket/hlimiter/pkg/client"
 )
 
 type PaymentService struct {
-	limiterClient *client.Client
-	// TODO: add database connection
+	limiterURL string
+	httpClient *http.Client
+}
+
+type rateLimitRequest struct {
+	Service string            `json:"service"`
+	API     string            `json:"api"`
+	IP      string            `json:"ip"`
+	Headers map[string]string `json:"headers"`
+}
+
+type rateLimitResponse struct {
+	Allowed   bool  `json:"allowed"`
+	Remaining int   `json:"remaining"`
+	ResetAt   int64 `json:"reset_at"`
+}
+
+func (p *PaymentService) checkLimit(svc, path, ip string, hdrs map[string]string) (*rateLimitResponse, error) {
+	reqBody := rateLimitRequest{
+		Service: svc,
+		API:     path,
+		IP:      ip,
+		Headers: hdrs,
+	}
+
+	data, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.httpClient.Post(p.limiterURL+"/check", "application/json", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var res rateLimitResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+
+	return &res, nil
 }
 
 func (p *PaymentService) handleProcess(w http.ResponseWriter, r *http.Request) {
-	sessID := r.Header.Get("X-Session-ID")
-	if sessID == "" {
-		http.Error(w, "session id required", http.StatusBadRequest)
+	sessionID := r.Header.Get("X-Session-ID")
+	if sessionID == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
 		return
 	}
 
-	fmt.Printf("[payment/process] session=%s\n", sessID)
+	fmt.Printf("[payment/process] sess=%s\n", sessionID)
 
-	res, err := p.limiterClient.Check(client.CheckRequest{
-		Service: "payment-service",
-		API:     "/payment/process",
-		IP:      r.RemoteAddr,
-		Headers: map[string]string{"X-Session-ID": sessID},
-	})
+	result, err := p.checkLimit("payment-service", "/payment/process", r.RemoteAddr, map[string]string{"X-Session-ID": sessionID})
 	if err != nil {
-		log.Printf("rate limit check error: %v", err)
+		log.Printf("limiter check failed: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	if !res.Allowed {
-		fmt.Printf("[payment/process] rate limited!\n")
-		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", res.Remaining))
-		http.Error(w, "too many payment attempts", http.StatusTooManyRequests)
+	if !result.Allowed {
+		fmt.Printf("[payment/process] RATE LIMITED\n")
+		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", result.Remaining))
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
 
@@ -52,29 +86,25 @@ func (p *PaymentService) handleProcess(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *PaymentService) handleValidate(w http.ResponseWriter, r *http.Request) {
-	clientIP := r.RemoteAddr
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		clientIP = fwd
+	ip := r.RemoteAddr
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		ip = forwarded
 	}
 
-	res, err := p.limiterClient.Check(client.CheckRequest{
-		Service: "payment-service",
-		API:     "/payment/validate",
-		IP:      clientIP,
-	})
+	result, err := p.checkLimit("payment-service", "/payment/validate", ip, nil)
 	if err != nil {
-		log.Printf("limiter err: %v", err)
+		log.Printf("rate check error: %v", err)
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
 
-	if !res.Allowed {
-		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", res.Remaining))
+	if !result.Allowed {
+		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", result.Remaining))
 		http.Error(w, "rate limited", http.StatusTooManyRequests)
 		return
 	}
 
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", res.Remaining))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", result.Remaining))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{
 		"valid": true,
@@ -82,22 +112,23 @@ func (p *PaymentService) handleValidate(w http.ResponseWriter, r *http.Request) 
 }
 
 func main() {
-	limiterUrl := os.Getenv("LIMITER_URL")
-	if limiterUrl == "" {
+	limiterURL := os.Getenv("LIMITER_URL")
+	if limiterURL == "" {
 		panic("LIMITER_URL environment variable is required")
 	}
-
-	svc := &PaymentService{
-		limiterClient: client.New(limiterUrl),
-	}
-
-	http.HandleFunc("/payment/process", svc.handleProcess)
-	http.HandleFunc("/payment/validate", svc.handleValidate)
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		panic("PORT environment variable is required")
 	}
+
+	svc := &PaymentService{
+		limiterURL: limiterURL,
+		httpClient: &http.Client{},
+	}
+
+	http.HandleFunc("/payment/process", svc.handleProcess)
+	http.HandleFunc("/payment/validate", svc.handleValidate)
 
 	fmt.Printf("payment service on port %s\n", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))

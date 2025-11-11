@@ -11,7 +11,6 @@ import (
 
 type Handler struct {
 	rl *limiter.RateLimiter
-	// TODO: add request logging?
 }
 
 func New(rl *limiter.RateLimiter) *Handler {
@@ -20,14 +19,14 @@ func New(rl *limiter.RateLimiter) *Handler {
 
 func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		fmt.Printf("[handler] invalid method: %s\n", r.Method)
+		fmt.Printf("[handler] bad method: %s\n", r.Method)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var req limiter.CheckRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		fmt.Printf("[handler] failed to decode request: %v\n", err)
+		fmt.Printf("[handler] decode err: %v\n", err)
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -38,8 +37,8 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp := h.rl.Check(req)
+	result := h.rl.Check(req)
 	
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(result)
 }

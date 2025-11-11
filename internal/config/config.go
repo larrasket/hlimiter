@@ -9,7 +9,6 @@ import (
 
 type Config struct {
 	Services []Service `yaml:"services"`
-	// TODO: add global defaults?
 }
 
 type Service struct {
@@ -19,11 +18,11 @@ type Service struct {
 
 type API struct {
 	Path          string `yaml:"path"`
-	Algorithm     string `yaml:"algorithm"` // sliding_window or token_bucket
-	KeyStrategy   string `yaml:"key_strategy"` // ip or header:X-Name
+	Algorithm     string `yaml:"algorithm"`
+	KeyStrategy   string `yaml:"key_strategy"`
 	Limit         int    `yaml:"limit"`
 	WindowSeconds int    `yaml:"window_seconds"`
-	Burst         int    `yaml:"burst"` // only for token_bucket
+	Burst         int    `yaml:"burst"`
 }
 
 func Load(path string) (*Config, error) {
@@ -49,32 +48,32 @@ func Load(path string) (*Config, error) {
 
 func (c *Config) validate() error {
 	if len(c.Services) == 0 {
-		return fmt.Errorf("no services defined")
+		return fmt.Errorf("no services configured")
 	}
 
 	for _, svc := range c.Services {
 		if svc.Name == "" {
-			return fmt.Errorf("service name cannot be empty")
+			return fmt.Errorf("empty service name")
 		}
 		if len(svc.APIs) == 0 {
-			return fmt.Errorf("service %s has no APIs defined", svc.Name)
+			return fmt.Errorf("service %s needs at least one API", svc.Name)
 		}
 
 		for _, api := range svc.APIs {
 			if api.Path == "" {
-				return fmt.Errorf("service %s has API with empty path", svc.Name)
+				return fmt.Errorf("service %s has empty path", svc.Name)
 			}
 			if api.Algorithm != "sliding_window" && api.Algorithm != "token_bucket" {
-				return fmt.Errorf("service %s api %s has invalid algorithm: %s", svc.Name, api.Path, api.Algorithm)
+				return fmt.Errorf("service %s api %s bad algorithm: %s", svc.Name, api.Path, api.Algorithm)
 			}
 			if api.Limit <= 0 {
-				return fmt.Errorf("service %s api %s has invalid limit: %d", svc.Name, api.Path, api.Limit)
+				return fmt.Errorf("service %s api %s bad limit: %d", svc.Name, api.Path, api.Limit)
 			}
 			if api.WindowSeconds <= 0 {
-				return fmt.Errorf("service %s api %s has invalid window_seconds: %d", svc.Name, api.Path, api.WindowSeconds)
+				return fmt.Errorf("service %s api %s bad window: %d", svc.Name, api.Path, api.WindowSeconds)
 			}
 			if api.KeyStrategy == "" {
-				return fmt.Errorf("service %s api %s has empty key_strategy", svc.Name, api.Path)
+				return fmt.Errorf("service %s api %s missing key strategy", svc.Name, api.Path)
 			}
 		}
 	}

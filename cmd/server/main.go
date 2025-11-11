@@ -12,22 +12,20 @@ import (
 )
 
 func main() {
-	cfgPath := os.Getenv("CONFIG_PATH")
-	if cfgPath == "" {
+	configPath := os.Getenv("CONFIG_PATH")
+	if configPath == "" {
 		panic("CONFIG_PATH environment variable is required")
 	}
-	fmt.Printf("[main] using config: %s\n", cfgPath)
+	fmt.Printf("[main] loading config: %s\n", configPath)
 
-	cfg, err := config.Load(cfgPath)
+	cfg, err := config.Load(configPath)
 	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
+		log.Fatalf("config load failed: %v", err)
 	}
 
-	// init rate limiter
-	limiter := limiter.New(cfg)
-	h := handler.New(limiter)
+	rl := limiter.New(cfg)
+	h := handler.New(rl)
 
-	// setup routes
 	http.HandleFunc("/check", h.Check)
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -39,6 +37,6 @@ func main() {
 		panic("PORT environment variable is required")
 	}
 
-	fmt.Printf("starting server on port %s\n", port)
+	fmt.Printf("starting on port %s\n", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
