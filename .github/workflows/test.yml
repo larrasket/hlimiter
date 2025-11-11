@@ -7,11 +7,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker-compose build
-      - run: docker-compose up -d
+      - run: docker compose build
+      - run: docker compose up -d
       - run: sleep 10
-      - run: docker-compose run --rm test-client
+      - run: docker compose run --rm test-client
       - if: failure()
-        run: docker-compose logs
+        run: docker compose logs
       - if: always()
-        run: docker-compose down -v
+        run: docker compose down -v
