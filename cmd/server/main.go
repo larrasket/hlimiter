@@ -1,8 +1,7 @@
 package main
 
 import (
-	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -19,32 +18,41 @@ import (
 )
 
 func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
+
 	configPath := os.Getenv("CONFIG_PATH")
 	if configPath == "" {
-		panic("CONFIG_PATH environment variable is required")
+		slog.Error("CONFIG_PATH environment variable is required")
+		os.Exit(1)
 	}
-	fmt.Printf("[main] loading config: %s\n", configPath)
+	slog.Info("loading config", "path", configPath)
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		log.Fatalf("config load failed: %v", err)
+		slog.Error("config load failed", "error", err)
+		os.Exit(1)
 	}
 
-	fmt.Printf("[redis] connecting to %s\n", cfg.Redis.Addr)
+	slog.Info("connecting to redis", "addr", cfg.Redis.Addr)
 	store, err := storage.NewRedis(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.PoolSize)
 	if err != nil {
-		log.Fatalf("redis connection failed: %v", err)
+		slog.Error("redis connection failed", "error", err)
+		os.Exit(1)
 	}
 	defer store.Close()
 
 	rl := limiter.NewRedis(store)
 
 	grpcAddr := cfg.GRPC.Addr
-	fmt.Printf("[grpc] starting on %s\n", grpcAddr)
+	slog.Info("starting grpc server", "addr", grpcAddr)
 	
 	lis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		slog.Error("failed to listen", "addr", grpcAddr, "error", err)
+		os.Exit(1)
 	}
 
 	s := grpc.NewServer(
@@ -57,16 +65,18 @@ func main() {
 
 	go func() {
 		if err := s.Serve(lis); err != nil {
-			log.Fatalf("grpc serve failed: %v", err)
+			slog.Error("grpc serve failed", "error", err)
+			os.Exit(1)
 		}
 	}()
 
-	fmt.Printf("[grpc] ready for service registration\n")
+	slog.Info("grpc server ready for service registration")
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	fmt.Println("\nshutting down...")
+	slog.Info("shutting down gracefully")
 	s.GracefulStop()
+	slog.Info("shutdown complete")
 }

@@ -39,7 +39,6 @@ type API struct {
 }
 
 func Load(path string) (*Config, error) {
-	fmt.Printf("[config] loading from %s\n", path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -54,8 +53,6 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
 
-	fmt.Printf("[config] loaded %d services\n", len(cfg.Services))
-	
 	return &cfg, nil
 }
 
@@ -66,7 +63,7 @@ func (c *Config) validate() error {
 	if c.GRPC.Addr == "" {
 		return fmt.Errorf("grpc addr required")
 	}
-	
+
 	if len(c.Services) == 0 {
 		return nil
 	}

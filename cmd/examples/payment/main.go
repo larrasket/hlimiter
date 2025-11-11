@@ -3,8 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -46,22 +45,23 @@ func (p *PaymentService) handleProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("[payment/process] sess=%s\n", sessionID)
+	slog.Info("processing payment", "session_id", sessionID, "ip", r.RemoteAddr)
 
 	allowed, remaining, _, err := p.checkLimit("payment-service", "/payment/process", r.RemoteAddr, map[string]string{"X-Session-ID": sessionID})
 	if err != nil {
-		log.Printf("limiter check failed: %v", err)
+		slog.Error("rate limit check failed", "error", err, "session_id", sessionID)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	if !allowed {
-		fmt.Printf("[payment/process] RATE LIMITED\n")
-		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+		slog.Warn("rate limit exceeded", "session_id", sessionID, "remaining", remaining)
+		w.Header().Set("X-RateLimit-Remaining", string(rune(remaining)))
 		http.Error(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
 
+	slog.Info("payment processed successfully", "session_id", sessionID, "remaining", remaining)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status": "success",
@@ -78,18 +78,20 @@ func (p *PaymentService) handleValidate(w http.ResponseWriter, r *http.Request) 
 
 	allowed, remaining, _, err := p.checkLimit("payment-service", "/payment/validate", ip, nil)
 	if err != nil {
-		log.Printf("rate check error: %v", err)
+		slog.Error("rate limit check failed", "error", err, "ip", ip)
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
 
 	if !allowed {
-		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+		slog.Warn("validation rate limited", "ip", ip, "remaining", remaining)
+		w.Header().Set("X-RateLimit-Remaining", string(rune(remaining)))
 		http.Error(w, "rate limited", http.StatusTooManyRequests)
 		return
 	}
 
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+	slog.Debug("validation successful", "ip", ip, "remaining", remaining)
+	w.Header().Set("X-RateLimit-Remaining", string(rune(remaining)))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{
 		"valid": true,
@@ -97,17 +99,24 @@ func (p *PaymentService) handleValidate(w http.ResponseWriter, r *http.Request) 
 }
 
 func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
+
 	grpcAddr := os.Getenv("LIMITER_GRPC_ADDR")
 	if grpcAddr == "" {
-		panic("LIMITER_GRPC_ADDR environment variable is required")
+		slog.Error("LIMITER_GRPC_ADDR environment variable is required")
+		os.Exit(1)
 	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		panic("PORT environment variable is required")
+		slog.Error("PORT environment variable is required")
+		os.Exit(1)
 	}
 
-	fmt.Printf("[grpc] connecting to %s\n", grpcAddr)
+	slog.Info("connecting to rate limiter", "addr", grpcAddr)
 	conn, err := grpc.NewClient(grpcAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(
@@ -116,13 +125,14 @@ func main() {
 		),
 	)
 	if err != nil {
-		log.Fatalf("grpc dial failed: %v", err)
+		slog.Error("grpc dial failed", "error", err)
+		os.Exit(1)
 	}
 	defer conn.Close()
 
 	client := pb.NewRateLimiterClient(conn)
 
-	fmt.Printf("[register] registering with rate limiter\n")
+	slog.Info("registering with rate limiter")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -147,12 +157,14 @@ func main() {
 		},
 	})
 	if err != nil {
-		log.Fatalf("registration failed: %v", err)
+		slog.Error("registration failed", "error", err)
+		os.Exit(1)
 	}
 	if !regResp.Success {
-		log.Fatalf("registration failed: %s", regResp.Message)
+		slog.Error("registration rejected", "message", regResp.Message)
+		os.Exit(1)
 	}
-	fmt.Printf("[register] %s\n", regResp.Message)
+	slog.Info("registration successful", "message", regResp.Message)
 
 	svc := &PaymentService{
 		grpcClient: client,
@@ -170,9 +182,10 @@ func main() {
 	}
 
 	go func() {
-		fmt.Printf("payment service on port %s\n", port)
+		slog.Info("payment service starting", "port", port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("http server failed: %v", err)
+			slog.Error("http server failed", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -180,12 +193,13 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	fmt.Println("\nshutting down payment service...")
+	slog.Info("shutting down payment service")
 	
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Printf("shutdown error: %v", err)
+		slog.Error("shutdown error", "error", err)
 	}
+	slog.Info("shutdown complete")
 }

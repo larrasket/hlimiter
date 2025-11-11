@@ -2,7 +2,7 @@ package limiter
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/larrasket/hlimiter/internal/config"
@@ -27,7 +27,7 @@ type RedisRateLimiter struct {
 }
 
 func NewRedis(store *storage.RedisStore) *RedisRateLimiter {
-	fmt.Printf("[limiter] redis backend initialized\n")
+	slog.Info("redis backend initialized")
 	return &RedisRateLimiter{store: store}
 }
 
@@ -35,7 +35,7 @@ func (rl *RedisRateLimiter) Register(ctx context.Context, serviceName string, ap
 	if err := rl.store.RegisterService(ctx, serviceName, apis); err != nil {
 		return err
 	}
-	fmt.Printf("[limiter] registered service: %s with %d APIs\n", serviceName, len(apis))
+	slog.Info("service registered", "service", serviceName, "apis", len(apis))
 	return nil
 }
 
@@ -69,11 +69,11 @@ func (rl *RedisRateLimiter) buildKey(req CheckRequest, api config.API) string {
 }
 
 func (rl *RedisRateLimiter) Check(ctx context.Context, req CheckRequest) (CheckResponse, error) {
-	fmt.Printf("[check] service=%s api=%s ip=%s\n", req.Service, req.API, req.IP)
+	slog.Debug("rate limit check", "service", req.Service, "api", req.API, "ip", req.IP)
 
 	apis, err := rl.store.GetServiceConfig(ctx, req.Service)
 	if err != nil {
-		fmt.Printf("[check] service not registered: %s\n", req.Service)
+		slog.Warn("service not registered, allowing request", "service", req.Service)
 		return CheckResponse{Allowed: true, Remaining: -1}, nil
 	}
 
@@ -83,14 +83,15 @@ func (rl *RedisRateLimiter) Check(ctx context.Context, req CheckRequest) (CheckR
 		}
 
 		key := rl.buildKey(req, api)
-		fmt.Printf("[check] algo=%s key=%s\n", api.Algorithm, key)
+		slog.Debug("checking rate limit", "algorithm", api.Algorithm, "key", key)
 
 		if api.Algorithm == "sliding_window" {
 			allowed, remaining, reset, err := rl.store.SlidingWindow(ctx, key, api.Limit, int64(api.WindowSeconds))
 			if err != nil {
+				slog.Error("sliding window check failed", "error", err, "key", key)
 				return CheckResponse{}, err
 			}
-			fmt.Printf("[check] sliding_window: allowed=%v remaining=%d\n", allowed, remaining)
+			slog.Info("rate limit check", "algorithm", "sliding_window", "allowed", allowed, "remaining", remaining)
 			return CheckResponse{Allowed: allowed, Remaining: remaining, ResetAt: reset}, nil
 		}
 
@@ -101,13 +102,14 @@ func (rl *RedisRateLimiter) Check(ctx context.Context, req CheckRequest) (CheckR
 			}
 			allowed, remaining, reset, err := rl.store.TokenBucket(ctx, key, api.Limit, burst, int64(api.WindowSeconds))
 			if err != nil {
+				slog.Error("token bucket check failed", "error", err, "key", key)
 				return CheckResponse{}, err
 			}
-			fmt.Printf("[check] token_bucket: allowed=%v remaining=%d\n", allowed, remaining)
+			slog.Info("rate limit check", "algorithm", "token_bucket", "allowed", allowed, "remaining", remaining)
 			return CheckResponse{Allowed: allowed, Remaining: remaining, ResetAt: reset}, nil
 		}
 	}
 
-	fmt.Printf("[check] no api config found for %s, defaulting to allow\n", req.API)
+	slog.Warn("no api config found, allowing request", "api", req.API)
 	return CheckResponse{Allowed: true, Remaining: -1}, nil
 }
