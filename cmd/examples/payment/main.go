@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -56,7 +57,7 @@ func (p *PaymentService) handleProcess(w http.ResponseWriter, r *http.Request) {
 
 	if !allowed {
 		slog.Warn("rate limit exceeded", "session_id", sessionID, "remaining", remaining)
-		w.Header().Set("X-RateLimit-Remaining", string(rune(remaining)))
+		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(int(remaining)))
 		http.Error(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
@@ -85,13 +86,13 @@ func (p *PaymentService) handleValidate(w http.ResponseWriter, r *http.Request) 
 
 	if !allowed {
 		slog.Warn("validation rate limited", "ip", ip, "remaining", remaining)
-		w.Header().Set("X-RateLimit-Remaining", string(rune(remaining)))
+		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(int(remaining)))
 		http.Error(w, "rate limited", http.StatusTooManyRequests)
 		return
 	}
 
 	slog.Debug("validation successful", "ip", ip, "remaining", remaining)
-	w.Header().Set("X-RateLimit-Remaining", string(rune(remaining)))
+	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(int(remaining)))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{
 		"valid": true,
