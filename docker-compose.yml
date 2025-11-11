@@ -1,0 +1,67 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: hlimiter-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - hlimiter-network
+
+  rate-limiter:
+    build:
+      context: .
+      dockerfile: Dockerfile.limiter
+    container_name: hlimiter-server
+    ports:
+      - "50051:50051"
+    environment:
+      - CONFIG_PATH=config.yaml
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "50051"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - hlimiter-network
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.payment
+    container_name: payment-service
+    ports:
+      - "9000:9000"
+    environment:
+      - LIMITER_GRPC_ADDR=rate-limiter:50051
+      - PORT=9000
+    depends_on:
+      rate-limiter:
+        condition: service_healthy
+    networks:
+      - hlimiter-network
+
+  test-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: test-client
+    environment:
+      - PAYMENT_URL=http://payment-service:9000
+    depends_on:
+      - payment-service
+    networks:
+      - hlimiter-network
+    profiles:
+      - test
+
+networks:
+  hlimiter-network:
+    driver: bridge

@@ -1,0 +1,8 @@
+redis:
+  addr: "redis:6379"
+  password: ""
+  db: 0
+  pool_size: 100
+
+grpc:
+  addr: "0.0.0.0:50051"

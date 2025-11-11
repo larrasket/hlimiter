@@ -1,0 +1,7 @@
+bin/
+*.log
+dump.rdb
+.git/
+.gitignore
+*.md
+!README.md
