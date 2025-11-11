@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/larrasket/hlimiter/internal/config"
 )
@@ -12,6 +11,25 @@ import (
 const configKeyPrefix = "rlconfig:"
 
 func (r *RedisStore) RegisterService(ctx context.Context, serviceName string, apis []config.API) error {
+	if serviceName == "" {
+		return fmt.Errorf("service name cannot be empty")
+	}
+	
+	for _, api := range apis {
+		if api.Path == "" {
+			return fmt.Errorf("api path cannot be empty")
+		}
+		if api.Algorithm != "sliding_window" && api.Algorithm != "token_bucket" {
+			return fmt.Errorf("invalid algorithm: %s", api.Algorithm)
+		}
+		if api.Limit <= 0 {
+			return fmt.Errorf("limit must be positive")
+		}
+		if api.WindowSeconds <= 0 {
+			return fmt.Errorf("window_seconds must be positive")
+		}
+	}
+	
 	key := configKeyPrefix + serviceName
 	
 	data, err := json.Marshal(apis)
@@ -39,23 +57,23 @@ func (r *RedisStore) GetServiceConfig(ctx context.Context, serviceName string) (
 }
 
 func (r *RedisStore) GetAllServices(ctx context.Context) (map[string][]config.API, error) {
-	ctxTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	pattern := configKeyPrefix + "*"
-	keys, err := r.client.Keys(ctxTimeout, pattern).Result()
-	if err != nil {
-		return nil, err
-	}
-
 	result := make(map[string][]config.API)
-	for _, key := range keys {
+	pattern := configKeyPrefix + "*"
+	
+	iter := r.client.Scan(ctx, 0, pattern, 100).Iterator()
+	for iter.Next(ctx) {
+		key := iter.Val()
 		serviceName := key[len(configKeyPrefix):]
+		
 		apis, err := r.GetServiceConfig(ctx, serviceName)
 		if err != nil {
 			continue
 		}
 		result[serviceName] = apis
+	}
+	
+	if err := iter.Err(); err != nil {
+		return nil, err
 	}
 
 	return result, nil

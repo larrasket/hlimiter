@@ -13,13 +13,22 @@ type RedisStore struct {
 }
 
 func NewRedis(addr, password string, db, poolSize int) (*RedisStore, error) {
+	if poolSize <= 0 {
+		poolSize = 100
+	}
+	
 	client := redis.NewClient(&redis.Options{
-		Addr:         addr,
-		Password:     password,
-		DB:           db,
-		PoolSize:     poolSize,
-		MinIdleConns: 10,
-		MaxRetries:   3,
+		Addr:            addr,
+		Password:        password,
+		DB:              db,
+		PoolSize:        poolSize,
+		MinIdleConns:    10,
+		MaxRetries:      3,
+		DialTimeout:     2 * time.Second,
+		ReadTimeout:     1 * time.Second,
+		WriteTimeout:    1 * time.Second,
+		PoolTimeout:     2 * time.Second,
+		ConnMaxIdleTime: 5 * time.Minute,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -45,9 +54,10 @@ redis.call('ZREMRANGEBYSCORE', key, 0, cutoff)
 local count = redis.call('ZCARD', key)
 if count < limit then
 	redis.call('ZADD', key, now, reqid)
-	redis.call('EXPIRE', key, window + 1)
+	redis.call('EXPIRE', key, math.ceil(window * 1.5))
 	return {1, limit - count - 1, now + window}
 else
+	redis.call('EXPIRE', key, math.ceil(window * 1.5))
 	return {0, 0, now + window}
 end
 `)
@@ -97,7 +107,7 @@ if tokens >= 1 then
 end
 
 redis.call('HMSET', key, 'tokens', tokens, 'last', now)
-redis.call('EXPIRE', key, window)
+redis.call('EXPIRE', key, math.ceil(window * 1.5))
 
 local needed = burst - tokens
 local secs_until_full = needed / rate

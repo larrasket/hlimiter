@@ -39,23 +39,33 @@ func (rl *RedisRateLimiter) Register(ctx context.Context, serviceName string, ap
 	return nil
 }
 
+func sanitizeKeyPart(s string) string {
+	s = strings.ReplaceAll(s, ":", "_")
+	s = strings.ReplaceAll(s, " ", "_")
+	if len(s) > 256 {
+		s = s[:256]
+	}
+	return s
+}
+
 func (rl *RedisRateLimiter) buildKey(req CheckRequest, api config.API) string {
 	strategy := api.KeyStrategy
+	service := sanitizeKeyPart(req.Service)
+	path := sanitizeKeyPart(api.Path)
 
 	if strategy == "ip" {
-		return req.Service + ":" + api.Path + ":ip:" + req.IP
+		ip := sanitizeKeyPart(req.IP)
+		return service + ":" + path + ":ip:" + ip
 	}
 
 	if strings.HasPrefix(strategy, "header:") {
 		headerName := strings.TrimPrefix(strategy, "header:")
 		val := req.Headers[headerName]
-		if len(val) > 256 {
-			val = val[:256]
-		}
-		return req.Service + ":" + api.Path + ":header:" + headerName + ":" + val
+		val = sanitizeKeyPart(val)
+		return service + ":" + path + ":header:" + headerName + ":" + val
 	}
 
-	return req.Service + ":" + api.Path + ":default"
+	return service + ":" + path + ":default"
 }
 
 func (rl *RedisRateLimiter) Check(ctx context.Context, req CheckRequest) (CheckResponse, error) {
