@@ -3,12 +3,19 @@ package main
 import (
 	"fmt"
 	"log"
-	"net/http"
+	"net"
 	"os"
+	"os/signal"
+	"syscall"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 
 	"github.com/larrasket/hlimiter/internal/config"
-	"github.com/larrasket/hlimiter/internal/handler"
+	grpcserver "github.com/larrasket/hlimiter/internal/grpc"
 	"github.com/larrasket/hlimiter/internal/limiter"
+	"github.com/larrasket/hlimiter/internal/storage"
+	pb "github.com/larrasket/hlimiter/proto"
 )
 
 func main() {
@@ -23,20 +30,43 @@ func main() {
 		log.Fatalf("config load failed: %v", err)
 	}
 
-	rl := limiter.New(cfg)
-	h := handler.New(rl)
+	fmt.Printf("[redis] connecting to %s\n", cfg.Redis.Addr)
+	store, err := storage.NewRedis(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.PoolSize)
+	if err != nil {
+		log.Fatalf("redis connection failed: %v", err)
+	}
+	defer store.Close()
 
-	http.HandleFunc("/check", h.Check)
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
+	rl := limiter.NewRedis(store)
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		panic("PORT environment variable is required")
+	grpcAddr := cfg.GRPC.Addr
+	fmt.Printf("[grpc] starting on %s\n", grpcAddr)
+	
+	lis, err := net.Listen("tcp", grpcAddr)
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
 	}
 
-	fmt.Printf("starting on port %s\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	s := grpc.NewServer(
+		grpc.MaxConcurrentStreams(1000),
+		grpc.MaxRecvMsgSize(1024*1024),
+		grpc.MaxSendMsgSize(1024*1024),
+	)
+	pb.RegisterRateLimiterServer(s, grpcserver.NewServer(rl))
+	reflection.Register(s)
+
+	go func() {
+		if err := s.Serve(lis); err != nil {
+			log.Fatalf("grpc serve failed: %v", err)
+		}
+	}()
+
+	fmt.Printf("[grpc] ready for service registration\n")
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	fmt.Println("\nshutting down...")
+	s.GracefulStop()
 }

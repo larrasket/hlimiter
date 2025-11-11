@@ -8,7 +8,20 @@ import (
 )
 
 type Config struct {
-	Services []Service `yaml:"services"`
+	Redis    RedisConfig `yaml:"redis"`
+	GRPC     GRPCConfig  `yaml:"grpc"`
+	Services []Service   `yaml:"services"`
+}
+
+type RedisConfig struct {
+	Addr     string `yaml:"addr"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
+	PoolSize int    `yaml:"pool_size"`
+}
+
+type GRPCConfig struct {
+	Addr string `yaml:"addr"`
 }
 
 type Service struct {
@@ -47,8 +60,15 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) validate() error {
+	if c.Redis.Addr == "" {
+		return fmt.Errorf("redis addr required")
+	}
+	if c.GRPC.Addr == "" {
+		return fmt.Errorf("grpc addr required")
+	}
+	
 	if len(c.Services) == 0 {
-		return fmt.Errorf("no services configured")
+		return nil
 	}
 
 	for _, svc := range c.Services {

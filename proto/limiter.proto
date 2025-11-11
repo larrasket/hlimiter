@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package limiter;
+
+option go_package = "github.com/larrasket/hlimiter/proto";
+
+service RateLimiter {
+  rpc Check(CheckRequest) returns (CheckResponse);
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+}
+
+message CheckRequest {
+  string service = 1;
+  string api = 2;
+  string ip = 3;
+  map<string, string> headers = 4;
+}
+
+message CheckResponse {
+  bool allowed = 1;
+  int32 remaining = 2;
+  int64 reset_at = 3;
+}
+
+message RegisterRequest {
+  string service = 1;
+  repeated APIConfig apis = 2;
+}
+
+message APIConfig {
+  string path = 1;
+  string algorithm = 2;
+  string key_strategy = 3;
+  int32 limit = 4;
+  int32 window_seconds = 5;
+  int32 burst = 6;
+}
+
+message RegisterResponse {
+  bool success = 1;
+  string message = 2;
+}

@@ -1,57 +1,40 @@
 package main
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	pb "github.com/larrasket/hlimiter/proto"
 )
 
 type PaymentService struct {
-	limiterURL string
-	httpClient *http.Client
+	grpcClient pb.RateLimiterClient
+	conn       *grpc.ClientConn
 }
 
-type rateLimitRequest struct {
-	Service string            `json:"service"`
-	API     string            `json:"api"`
-	IP      string            `json:"ip"`
-	Headers map[string]string `json:"headers"`
-}
+func (p *PaymentService) checkLimit(svc, path, ip string, hdrs map[string]string) (bool, int32, int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
 
-type rateLimitResponse struct {
-	Allowed   bool  `json:"allowed"`
-	Remaining int   `json:"remaining"`
-	ResetAt   int64 `json:"reset_at"`
-}
-
-func (p *PaymentService) checkLimit(svc, path, ip string, hdrs map[string]string) (*rateLimitResponse, error) {
-	reqBody := rateLimitRequest{
+	resp, err := p.grpcClient.Check(ctx, &pb.CheckRequest{
 		Service: svc,
-		API:     path,
-		IP:      ip,
+		Api:     path,
+		Ip:      ip,
 		Headers: hdrs,
-	}
-
-	data, err := json.Marshal(reqBody)
+	})
 	if err != nil {
-		return nil, err
+		return false, 0, 0, err
 	}
 
-	resp, err := p.httpClient.Post(p.limiterURL+"/check", "application/json", bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var res rateLimitResponse
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return nil, err
-	}
-
-	return &res, nil
+	return resp.Allowed, resp.Remaining, resp.ResetAt, nil
 }
 
 func (p *PaymentService) handleProcess(w http.ResponseWriter, r *http.Request) {
@@ -63,16 +46,16 @@ func (p *PaymentService) handleProcess(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Printf("[payment/process] sess=%s\n", sessionID)
 
-	result, err := p.checkLimit("payment-service", "/payment/process", r.RemoteAddr, map[string]string{"X-Session-ID": sessionID})
+	allowed, remaining, _, err := p.checkLimit("payment-service", "/payment/process", r.RemoteAddr, map[string]string{"X-Session-ID": sessionID})
 	if err != nil {
 		log.Printf("limiter check failed: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	if !result.Allowed {
+	if !allowed {
 		fmt.Printf("[payment/process] RATE LIMITED\n")
-		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", result.Remaining))
+		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
 		http.Error(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
@@ -91,20 +74,20 @@ func (p *PaymentService) handleValidate(w http.ResponseWriter, r *http.Request) 
 		ip = forwarded
 	}
 
-	result, err := p.checkLimit("payment-service", "/payment/validate", ip, nil)
+	allowed, remaining, _, err := p.checkLimit("payment-service", "/payment/validate", ip, nil)
 	if err != nil {
 		log.Printf("rate check error: %v", err)
 		http.Error(w, "error", http.StatusInternalServerError)
 		return
 	}
 
-	if !result.Allowed {
-		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", result.Remaining))
+	if !allowed {
+		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
 		http.Error(w, "rate limited", http.StatusTooManyRequests)
 		return
 	}
 
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", result.Remaining))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{
 		"valid": true,
@@ -112,9 +95,9 @@ func (p *PaymentService) handleValidate(w http.ResponseWriter, r *http.Request) 
 }
 
 func main() {
-	limiterURL := os.Getenv("LIMITER_URL")
-	if limiterURL == "" {
-		panic("LIMITER_URL environment variable is required")
+	grpcAddr := os.Getenv("LIMITER_GRPC_ADDR")
+	if grpcAddr == "" {
+		panic("LIMITER_GRPC_ADDR environment variable is required")
 	}
 
 	port := os.Getenv("PORT")
@@ -122,9 +105,56 @@ func main() {
 		panic("PORT environment variable is required")
 	}
 
+	fmt.Printf("[grpc] connecting to %s\n", grpcAddr)
+	conn, err := grpc.NewClient(grpcAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(1024*1024),
+			grpc.MaxCallSendMsgSize(1024*1024),
+		),
+	)
+	if err != nil {
+		log.Fatalf("grpc dial failed: %v", err)
+	}
+	defer conn.Close()
+
+	client := pb.NewRateLimiterClient(conn)
+
+	fmt.Printf("[register] registering with rate limiter\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	regResp, err := client.Register(ctx, &pb.RegisterRequest{
+		Service: "payment-service",
+		Apis: []*pb.APIConfig{
+			{
+				Path:          "/payment/process",
+				Algorithm:     "sliding_window",
+				KeyStrategy:   "header:X-Session-ID",
+				Limit:         10,
+				WindowSeconds: 300,
+			},
+			{
+				Path:          "/payment/validate",
+				Algorithm:     "token_bucket",
+				KeyStrategy:   "ip",
+				Limit:         50,
+				WindowSeconds: 60,
+				Burst:         10,
+			},
+		},
+	})
+	if err != nil {
+		log.Fatalf("registration failed: %v", err)
+	}
+	if !regResp.Success {
+		log.Fatalf("registration failed: %s", regResp.Message)
+	}
+	fmt.Printf("[register] %s\n", regResp.Message)
+
 	svc := &PaymentService{
-		limiterURL: limiterURL,
-		httpClient: &http.Client{},
+		grpcClient: client,
+		conn:       conn,
 	}
 
 	http.HandleFunc("/payment/process", svc.handleProcess)
