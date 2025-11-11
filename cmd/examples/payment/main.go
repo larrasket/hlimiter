@@ -84,7 +84,7 @@ func (p *PaymentService) handleValidate(w http.ResponseWriter, r *http.Request) 
 func main() {
 	limiterUrl := os.Getenv("LIMITER_URL")
 	if limiterUrl == "" {
-		limiterUrl = "http://localhost:8080"
+		panic("LIMITER_URL environment variable is required")
 	}
 
 	svc := &PaymentService{
@@ -96,7 +96,7 @@ func main() {
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "9002"
+		panic("PORT environment variable is required")
 	}
 
 	fmt.Printf("payment service on port %s\n", port)

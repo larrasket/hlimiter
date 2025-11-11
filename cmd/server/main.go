@@ -12,10 +12,9 @@ import (
 )
 
 func main() {
-	// load config from env or default
 	cfgPath := os.Getenv("CONFIG_PATH")
 	if cfgPath == "" {
-		cfgPath = "config.yaml"
+		panic("CONFIG_PATH environment variable is required")
 	}
 	fmt.Printf("[main] using config: %s\n", cfgPath)
 
@@ -31,17 +30,13 @@ func main() {
 	// setup routes
 	http.HandleFunc("/check", h.Check)
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		// simple health check
-		// fmt.Printf("[health] check from %s\n", r.RemoteAddr)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
-	// TODO: add /metrics endpoint?
-	// TODO: add /config endpoint to view current config?
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		panic("PORT environment variable is required")
 	}
 
 	fmt.Printf("starting server on port %s\n", port)

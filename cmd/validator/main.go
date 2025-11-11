@@ -11,7 +11,7 @@ import (
 func main() {
 	limiterURL := os.Getenv("LIMITER_URL")
 	if limiterURL == "" {
-		limiterURL = "http://localhost:8080"
+		panic("LIMITER_URL environment variable is required")
 	}
 
 	c := client.New(limiterURL)
@@ -26,7 +26,7 @@ func main() {
 	testHeaderStrategy(c)
 
 	fmt.Println()
-	fmt.Println("✓ All validation tests passed!")
+	fmt.Println("All validation tests passed")
 }
 
 func testSlidingWindow(c *client.Client) {
@@ -61,7 +61,7 @@ func testSlidingWindow(c *client.Client) {
 		os.Exit(1)
 	}
 
-	fmt.Println("  ✓ Sliding window works correctly")
+	fmt.Println("  Sliding window works correctly")
 }
 
 func testTokenBucket(c *client.Client) {
@@ -103,7 +103,7 @@ func testTokenBucket(c *client.Client) {
 		os.Exit(1)
 	}
 
-	fmt.Println("  ✓ Token bucket burst limit works correctly")
+	fmt.Println("  Token bucket burst limit works correctly")
 
 	time.Sleep(2 * time.Second)
 	fmt.Println("  Waiting 2s for token refill...")
@@ -125,7 +125,7 @@ func testTokenBucket(c *client.Client) {
 	}
 
 	fmt.Printf("  After refill: ALLOWED (remaining: %d)\n", resp.Remaining)
-	fmt.Println("  ✓ Token bucket refill works correctly")
+	fmt.Println("  Token bucket refill works correctly")
 }
 
 func testHeaderStrategy(c *client.Client) {
@@ -180,5 +180,5 @@ func testHeaderStrategy(c *client.Client) {
 		os.Exit(1)
 	}
 
-	fmt.Println("  ✓ Header-based isolation works correctly")
+	fmt.Println("  Header-based isolation works correctly")
 }
