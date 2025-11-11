@@ -64,16 +64,14 @@ func (sw *slidingWindow) allow() (bool, int, int64) {
 	}
 	sw.requests = validReqs
 
-	// check if we're under limit
 	ok := len(sw.requests) < sw.limit
+	rem := sw.limit - len(sw.requests)
 	if ok {
 		sw.requests = append(sw.requests, now)
+		rem--
 	}
 
-	rem := sw.limit - len(sw.requests)
 	resetAt := now + sw.windowSec
-
-	// fmt.Printf("[sliding_window] requests: %d/%d, allowed: %v\n", len(sw.requests), sw.limit, ok)
 
 	return ok, rem, resetAt
 }
@@ -88,15 +86,16 @@ func (tb *tokenBucket) allow() (bool, int, int64) {
 	tb.tokens = min(tb.burst, tb.tokens+elapsed*tb.refillRate)
 	tb.lastRefill = now
 
-	// fmt.Printf("[token_bucket] tokens: %.2f, elapsed: %.2fs, rate: %.2f\n", tb.tokens, elapsed, tb.refillRate)
-
 	ok := tb.tokens >= 1
 	if ok {
-		tb.tokens-- // consume one token
+		tb.tokens--
 	}
 
 	rem := int(tb.tokens)
-	resetTime := now.Add(time.Duration((1 - tb.tokens) / tb.refillRate * float64(time.Second))).Unix()
+	
+	tokensNeeded := tb.burst - tb.tokens
+	secondsUntilFull := tokensNeeded / tb.refillRate
+	resetTime := now.Add(time.Duration(secondsUntilFull * float64(time.Second))).Unix()
 
 	return ok, rem, resetTime
 }
@@ -105,21 +104,18 @@ func (rl *RateLimiter) extractKey(req CheckRequest, api config.API) string {
 	strat := api.KeyStrategy
 
 	if strat == "ip" {
-		key := req.Service + ":" + api.Path + ":ip:" + req.IP
-		// fmt.Printf("[extractKey] ip strategy, key: %s\n", key)
-		return key
+		return req.Service + ":" + api.Path + ":ip:" + req.IP
 	}
 
 	if strings.HasPrefix(strat, "header:") {
 		hdrName := strings.TrimPrefix(strat, "header:")
 		hdrVal := req.Headers[hdrName]
-		// TODO: maybe hash the header value....
-		key := req.Service + ":" + api.Path + ":header:" + hdrName + ":" + hdrVal
-		// fmt.Printf("[extractKey] header strategy, key: %s\n", key)
-		return key
+		if len(hdrVal) > 256 {
+			hdrVal = hdrVal[:256]
+		}
+		return req.Service + ":" + api.Path + ":header:" + hdrName + ":" + hdrVal
 	}
 
-	// fallback to service:path only
 	return req.Service + ":" + api.Path + ":default"
 }
 

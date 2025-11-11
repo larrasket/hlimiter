@@ -38,8 +38,46 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
+	}
+
 	fmt.Printf("[config] loaded %d services\n", len(cfg.Services))
-	// TODO: validate config values?
 	
 	return &cfg, nil
+}
+
+func (c *Config) validate() error {
+	if len(c.Services) == 0 {
+		return fmt.Errorf("no services defined")
+	}
+
+	for _, svc := range c.Services {
+		if svc.Name == "" {
+			return fmt.Errorf("service name cannot be empty")
+		}
+		if len(svc.APIs) == 0 {
+			return fmt.Errorf("service %s has no APIs defined", svc.Name)
+		}
+
+		for _, api := range svc.APIs {
+			if api.Path == "" {
+				return fmt.Errorf("service %s has API with empty path", svc.Name)
+			}
+			if api.Algorithm != "sliding_window" && api.Algorithm != "token_bucket" {
+				return fmt.Errorf("service %s api %s has invalid algorithm: %s", svc.Name, api.Path, api.Algorithm)
+			}
+			if api.Limit <= 0 {
+				return fmt.Errorf("service %s api %s has invalid limit: %d", svc.Name, api.Path, api.Limit)
+			}
+			if api.WindowSeconds <= 0 {
+				return fmt.Errorf("service %s api %s has invalid window_seconds: %d", svc.Name, api.Path, api.WindowSeconds)
+			}
+			if api.KeyStrategy == "" {
+				return fmt.Errorf("service %s api %s has empty key_strategy", svc.Name, api.Path)
+			}
+		}
+	}
+
+	return nil
 }

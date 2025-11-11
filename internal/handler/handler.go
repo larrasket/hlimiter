@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 
 	"github.com/larrasket/hlimiter/internal/limiter"
@@ -18,7 +19,6 @@ func New(rl *limiter.RateLimiter) *Handler {
 }
 
 func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
-	// only accept POST requests
 	if r.Method != http.MethodPost {
 		fmt.Printf("[handler] invalid method: %s\n", r.Method)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -27,18 +27,19 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 
 	var req limiter.CheckRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		// TODO: log the error details?
 		fmt.Printf("[handler] failed to decode request: %v\n", err)
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 
-	// fmt.Printf("[handler] received check request: %+v\n", req)
+	if req.IP != "" {
+		if host, _, err := net.SplitHostPort(req.IP); err == nil {
+			req.IP = host
+		}
+	}
 
-	// check rate limit
 	resp := h.rl.Check(req)
 	
-	// always return json
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
